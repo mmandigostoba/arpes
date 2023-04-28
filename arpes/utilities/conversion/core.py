@@ -39,7 +39,7 @@ from arpes.utilities import normalize_to_spectrum
 from typing import Callable, Optional, Union
 
 from .kx_ky_conversion import ConvertKxKy, ConvertKp
-from .kz_conversion import ConvertKpKz
+from .kz_conversion import ConvertKpKz, ConvertKxKyKz
 
 __all__ = ["convert_to_kspace", "slice_along_path"]
 
@@ -478,6 +478,7 @@ def convert_to_kspace(
         ("phi", "psi"): ConvertKxKy,
         # ('chi', 'phi',): ConvertKxKy,
         ("hv", "phi"): ConvertKpKz,
+        ("beta", "hv", "phi"): ConvertKxKyKz,
     }.get(tuple(old_dims))
     converter = convert_cls(arr, converted_dims, calibration=calibration)
 

@@ -34,6 +34,7 @@ def raw_lin_interpolate_1d(xd, c0, c1):
 
 @numba.njit
 def raw_lin_interpolate_2d(xd, yd, c00, c01, c10, c11):
+    # xd, yd is x_delta, y_delta
     # project to 1D
     c0 = _i1d(xd, c00, c10)
     c1 = _i1d(xd, c01, c11)
@@ -55,6 +56,61 @@ def raw_lin_interpolate_3d(xd, yd, zd, c000, c001, c010, c100, c011, c101, c110,
 
     return _i1d(zd, c0, c1)
 
+@numba.njit
+def raw_lin_interpolate_4d(xd, yd, zd, wd,
+                           c0000, c0001, c0010, c0011,
+                           c0100, c0101, c0110, c0111,
+                           c1000, c1001, c1010, c1011,
+                           c1100, c1101, c1110, c1111):
+    # project to 3D
+    c000 = _i1d(xd, c0000, c1000)
+    c001 = _i1d(xd, c0001, c1001)
+    c010 = _i1d(xd, c0010, c1010)
+    c011 = _i1d(xd, c0011, c1011)
+    c100 = _i1d(xd, c0100, c1100)
+    c101 = _i1d(xd, c0101, c1101)
+    c110 = _i1d(xd, c0110, c1110)
+    c111 = _i1d(xd, c0111, c1111)
+    
+    # project to 2D
+    c00 = _i1d(yd, c000, c100)
+    c01 = _i1d(yd, c001, c101)
+    c10 = _i1d(yd, c010, c110)
+    c11 = _i1d(yd, c011, c111)
+
+    # project to 1D
+    c0 = _i1d(zd, c00, c10)
+    c1 = _i1d(zd, c01, c11)
+
+    return _i1d(wd, c0, c1)
+
+
+@numba.njit
+def lin_interpolate_4d(data, ix, iy, iz, iw,
+                       ixp, iyp, izp, iwp,
+                       xd, yd, zd, wd):
+    return raw_lin_interpolate_4d(
+        xd,
+        yd,
+        zd,
+        wd,
+        data[ix][iy][iz][iw],
+        data[ix][iy][iz][iwp],
+        data[ix][iy][izp][iw],
+        data[ix][iy][izp][iwp],
+        data[ix][iyp][iz][iw],
+        data[ix][iyp][iz][iwp],
+        data[ix][iyp][izp][iw],
+        data[ix][iyp][izp][iwp],
+        data[ixp][iy][iz][iw],
+        data[ixp][iy][iz][iwp],
+        data[ixp][iy][izp][iw],
+        data[ixp][iy][izp][iwp],
+        data[ixp][iyp][iz][iw],
+        data[ixp][iyp][iz][iwp],
+        data[ixp][iyp][izp][iw],
+        data[ixp][iyp][izp][iwp],
+    )
 
 @numba.njit
 def lin_interpolate_3d(data, ix, iy, iz, ixp, iyp, izp, xd, yd, zd):
@@ -83,6 +139,57 @@ def lin_interpolate_2d(data, ix, iy, ixp, iyp, xd, yd):
         data[ixp][iy],
         data[ixp][iyp],
     )
+
+
+@numba.njit(parallel=True)
+def interpolate_4d(
+    data,
+    output,
+    lower_corner_x,
+    lower_corner_y,
+    lower_corner_z,
+    lower_corner_w,
+    delta_x,
+    delta_y,
+    delta_z,
+    delta_w,
+    shape_x,
+    shape_y,
+    shape_z,
+    shape_w,
+    x,
+    y,
+    z,
+    w,
+    fill_value=np.nan,
+):
+    for i in numba.prange(len(x)):
+        if np.isnan(x[i]) or np.isnan(y[i]) or np.isnan(z[i]) or np.isnan(w[i]):
+            output[i] = fill_value
+            continue
+
+        ix = to_fractional_coordinate(x[i], lower_corner_x, delta_x)
+        iy = to_fractional_coordinate(y[i], lower_corner_y, delta_y)
+        iz = to_fractional_coordinate(z[i], lower_corner_z, delta_z)
+        iw = to_fractional_coordinate(w[i], lower_corner_w, delta_w)
+
+        if (ix < 0 or iy < 0 or iz < 0 or iw < 0
+            or ix >= shape_x or iy >= shape_y or iz >= shape_z or iw >= shape_w):
+            output[i] = fill_value
+            continue
+
+        iix, iiy, iiz, iiw = math.floor(ix), math.floor(iy), math.floor(iz), math.floor(iw)
+        iixp, iiyp, iizp, iiwp = (
+            min(iix + 1, shape_x - 1),
+            min(iiy + 1, shape_y - 1),
+            min(iiz + 1, shape_z - 1),
+            min(iiw + 1, shape_w - 1),
+        )
+        xd, yd, zd, wd = ix - iix, iy - iiy, iz - iiz, iw - iiw
+
+        output[i] = lin_interpolate_4d(data, iix, iiy, iiz, iiw,
+                                       iixp, iiyp, iizp, iiwp,
+                                       xd, yd, zd, wd)
 
 
 @numba.njit(parallel=True)
@@ -220,6 +327,7 @@ class Interpolator:
         output = np.zeros_like(xi[0])
 
         interpolator = {
+            4: interpolate_4d,
             3: interpolate_3d,
             2: interpolate_2d,
         }[self.data.ndim]

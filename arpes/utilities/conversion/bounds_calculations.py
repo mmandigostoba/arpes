@@ -258,3 +258,76 @@ def calculate_kx_ky_bounds(arr: xr.DataArray):
         (round(np.min(kxs), 2), round(np.max(kxs), 2)),
         (round(np.min(kys), 2), round(np.max(kys), 2)),
     )
+
+def calculate_kx_ky_kz_bounds(arr: xr.DataArray):
+    """Calculates the kx, ky, kz range for a dataset.
+    This is used to infer the gridding that should be used for a k-space conversion.
+    Based on Jonathan Denlinger's old codes
+    Args:
+        arr: Dataset that includes a key indicating the photon energy of
+          the scan
+    Returns:
+        ((kx_low, kx_high,), (ky_low, ky_high,), (kz_low, kz_high))
+    """
+    phi_coords, beta_coords = (
+        arr.coords["phi"] - arr.S.phi_offset,
+        arr.coords["beta"] - arr.S.beta_offset,
+    )
+    
+    wf = arr.S.work_function
+
+    # Sample hopefully representatively along the edges
+    phi_low, phi_high = np.min(phi_coords), np.max(phi_coords)
+    beta_low, beta_high = np.min(beta_coords), np.max(beta_coords)
+    phi_mid = (phi_high + phi_low) / 2
+    beta_mid = (beta_high + beta_low) / 2
+
+    sampled_phi_values = np.array(
+        [phi_high, phi_high, phi_mid, phi_low, phi_low, phi_low, phi_mid, phi_high, phi_high]
+    )
+    sampled_beta_values = np.array(
+        [
+            beta_mid,
+            beta_high,
+            beta_high,
+            beta_high,
+            beta_mid,
+            beta_low,
+            beta_low,
+            beta_low,
+            beta_mid,
+        ]
+    )
+    kinetic_energy_low = np.min(arr.hv.values) - wf
+    kinetic_energy_high = np.max(arr.hv.values) - wf
+
+    kxs_low = arpes.constants.K_INV_ANGSTROM * np.sqrt(kinetic_energy_low) * np.sin(sampled_phi_values)
+    kxs_high = arpes.constants.K_INV_ANGSTROM * np.sqrt(kinetic_energy_high) * np.sin(sampled_phi_values)
+    kys_low = (
+        arpes.constants.K_INV_ANGSTROM
+        * np.sqrt(kinetic_energy_low)
+        * np.cos(sampled_phi_values)
+        * np.sin(sampled_beta_values)
+    )
+    kys_high = (
+        arpes.constants.K_INV_ANGSTROM
+        * np.sqrt(kinetic_energy_high)
+        * np.cos(sampled_phi_values)
+        * np.sin(sampled_beta_values)
+    )
+    
+    
+    binding_energy_min, binding_energy_max = np.min(arr.coords["eV"].values), np.max(
+        arr.coords["eV"].values
+    )
+    hv_min, hv_max = np.min(arr.coords["hv"].values), np.max(arr.coords["hv"].values)
+    angle_max = max(abs(phi_low), abs(phi_high))
+    inner_V = arr.S.inner_potential
+    kz_min = spherical_to_kz(hv_min + binding_energy_min - wf, angle_max, 0, inner_V).item()
+    kz_max = spherical_to_kz(hv_max + binding_energy_max - wf, 0, 0, inner_V).item()
+
+    return (
+        (round(np.min(kxs_low), 2), round(np.max(kxs_high), 2)),
+        (round(np.min(kys_low), 2), round(np.max(kys_high), 2)),
+        (round(kz_min, 2), round(kz_max, 2)),
+    )
